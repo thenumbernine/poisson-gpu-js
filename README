@@ -1,0 +1,2 @@
+uses Jacobi method for the moment because I'm *that* lazy.
+might add advection along eigenvectors, critical point detection, graph extraction, etc later.
