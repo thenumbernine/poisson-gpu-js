@@ -213,21 +213,21 @@ function reduceDisplayTex() {
 	fbo.check();
 	gl.viewport(0, 0, res, res);
 	//TODO we don't need to draw to the whole quad if we're just going to read back the 1x1 corner pixel	
-	var uint8Result = new Uint8Array(4);
+	var reduceUInt8Result = new Uint8Array(4);
 	//read min
 	quadObj.draw({
 		shader : encodeShaders[0],	//read channel 0 (red) from pixel 0,0
 		texs : [reduceTex]
 	});
-	gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, uint8Result);
-	lastDataMin2 = (new Float32Array(uint8Result))[0];
+	gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, reduceUInt8Result);
+	lastDataMin = (new Float32Array(reduceUInt8Result.buffer))[0];
 	//read max
 	quadObj.draw({
 		shader : encodeShaders[1],	//read channel 1 (green) from pixel 0,0
 		texs : [reduceTex]
 	});
-	gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, uint8Result);
-	lastDataMax2 = (new Float32Array(uint8Result))[0];
+	gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, reduceUInt8Result);
+	lastDataMax = (new Float32Array(reduceUInt8Result.buffer))[0];
 	fbo.unbind();	
 }
 
@@ -317,13 +317,13 @@ $(document).ready(function() {
 			name : 'density',
 			code : mlstr(function(){/*
 return texture2D(densityTex, pos).r;
-*/})
+			*/})
 		},
 		{
 			name : 'potential',
 			code : mlstr(function(){/*
 return texture2D(potentialTex, pos).r;
-*/})
+			*/})
 		},
 		{
 			name : 'field',
@@ -336,7 +336,7 @@ vec2 dphi_d;
 dphi_d.x = (phiXP - phiXN) / (2. * dx);
 dphi_d.y = (phiYP - phiYN) / (2. * dx);
 return length(dphi_d);
-*/})
+			*/})
 		},
 		{
 			name : 'angle',
@@ -349,8 +349,8 @@ vec2 dphi_d;
 dphi_d.x = (phiXP - phiXN) / (2. * dx);
 dphi_d.y = (phiYP - phiYN) / (2. * dx);
 const float pi = 3.141592653589793115997963468544185161590576171875;
-return atan(dphi_d.y, dphi_d.x) / (2. * pi);
-*/})
+return atan(dphi_d.y, dphi_d.x);
+			*/})
 		}
 	];
 
@@ -407,7 +407,7 @@ uniform sampler2D heatTex;
 uniform float lastMin, lastMax;
 void main() {
 	float v = texture2D(displayTex, pos).r;
-	v = (v - lastMin) / (lastMax - lastMin);
+	v = (v - lastMin) / (lastMax - lastMin + 1e-6);
 	gl_FragColor = texture2D(heatTex, vec2(v, .5));
 }
 		*/}),
