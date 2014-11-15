@@ -356,11 +356,39 @@ void main() {
 		texs : ['potentialTex', 'densityTex']
 	});
 
+	reduceShader : new glutil.KernelShader({
+		code : mlstr(function(){/*
+void main() {
+	vec2 intPos = pos * viewsize - .5;
+}
+		*/}),
+		uniforms : {
+			texsize : 'vec2',
+			viewsize : 'vec2'
+		},
+		texs : ['srcTex']
+	});
+	
 	addDropShader = new glutil.KernelShader({
 		code : mlstr(function(){/*
 void main() {
-	vec2 delta = pos - point;
-	float len = length(delta);
+
+	//distance from line segment between mousePos and mouseLastPos
+	vec2 mouseDelta = mousePos - mouseLastPos;
+	float mouseDeltaLenSq = dot(mouseDelta, mouseDelta);
+	float t;
+	if (mouseDeltaLenSq < 1e-5) {
+		t = 0.; 
+	} else {
+		vec2 posToLine = pos - mouseLastPos;
+		t = dot(posToLine, mouseDelta) / mouseDeltaLenSq; 
+	}
+	t = clamp(t, 0., 1.);
+	vec2 closest = mix(mouseLastPos, mousePos, t);
+
+	float len = length(pos - closest);
+	
+	
 	float infl = step(-radius, -len);
 	gl_FragColor = texture2D(tex, pos);
 	gl_FragColor.r = mix(gl_FragColor.r, color, infl);
@@ -368,8 +396,9 @@ void main() {
 		*/}),
 		uniforms : {
 			color : ['float', .5],
-			radius : ['float', .01],
-			point : 'vec2'
+			radius : ['float', 2/res],
+			mousePos : 'vec2',
+			mouseLastPos : 'vec2'
 		},
 		texs : ['tex']
 	});
@@ -396,29 +425,45 @@ void main() {
 		static : true
 	});
 
+	var mousePos = vec2.create();
+	var mouseLastPos = vec2.create();
+	var mouse;
+	var updateMousePos = function() {
+		mouseLastPos[0] = mousePos[0];
+		mouseLastPos[1] = mousePos[1];
+		mousePos[0] = (mouse.xf - .5) * glutil.canvas.width / glutil.canvas.height + .5;
+		mousePos[1] = 1 - mouse.yf;
+	};
+	var createDrop = function() {
+		//add to density kernel  ...
+		fbo.setColorAttachmentTex2D(0, tmpTex);
+		fbo.draw({
+			callback : function() {
+				gl.viewport(0, 0, res, res);
+				quadObj.draw({
+					shader : addDropShader,
+					texs : [densityTex],
+					uniforms : {
+						mousePos : mousePos,
+						mouseLastPos : mouseLastPos
+					}
+				});
+			}
+		});
+		var tmp = tmpTex;
+		tmpTex = densityTex;
+		densityTex = tmp;
+	};
 	mouse = new Mouse3D({
 		pressObj : canvas,
-		move : function(dx, dy) {
-			//add to density kernel  ...
-			fbo.setColorAttachmentTex2D(0, tmpTex);
-			fbo.draw({
-				callback : function() {
-					gl.viewport(0, 0, res, res);
-					quadObj.draw({
-						shader : addDropShader,
-						texs : [densityTex],
-						uniforms : {
-							point : [
-								(mouse.xf - .5) * glutil.canvas.width / glutil.canvas.height + .5,
-								1 - mouse.yf
-							]
-						}
-					});
-				}
-			});
-			var tmp = tmpTex;
-			tmpTex = densityTex;
-			densityTex = tmp;
+		passiveMove : updateMousePos,
+		move : function() {
+			updateMousePos();
+			createDrop();
+		},
+		mousedown : function() {
+			updateMousePos();
+			createDrop();
 		}
 	});
 
