@@ -14,13 +14,17 @@ var fbo;
 //textures
 var densityTex;
 var potentialTex;
+var displayTex;	//fbo renders whatever draw mode to this tex, then reduce finds the extents, then this is drawn with colors normalized
+var reduceTex;	//scratch tex for finding the min/max
 var tmpTex;
-var tmpTex2;
 //shaders
-var renderShaders = {};
+var displayShaders = {};
+var drawHeatShader;
 var addDropShader;
 var relaxShader;
+var initReduceShader;
 var reduceShader;
+var encodeShaders = [];
 //vars
 var currentDrawMode;
 var res = 1024;
@@ -122,17 +126,32 @@ function update() {
 
 	//display
 	glutil.unitQuad.draw({
-		shader : renderShaders[currentDrawMode.name],
+		shader : drawHeatShader,
 		uniforms : {
 			lastMin : lastDataMin,
 			lastMax : lastDataMax
 		},
 		texs : [
-			potentialTex,
-			densityTex,
+			displayTex,
 			heatTex
 		]
 	});
+
+
+	//generate display texture
+	fbo.setColorAttachmentTex2D(0, tmpTex);
+	fbo.draw({
+		callback : function() {
+			gl.viewport(0, 0, res, res);
+			quadObj.draw({
+				shader : displayShaders[currentDrawMode.name],
+				texs : [potentialTex, densityTex]
+			});
+		}
+	});
+	var tmp = tmpTex;
+	tmpTex = displayTex;
+	displayTex = tmp;
 
 	//relax buffer
 	fbo.setColorAttachmentTex2D(0, tmpTex);
@@ -148,6 +167,69 @@ function update() {
 	var tmp = tmpTex;
 	tmpTex = potentialTex;
 	potentialTex = tmp;
+
+	//init reduceTex
+	fbo.setColorAttachmentTex2D(0, tmpTex);
+	fbo.draw({
+		callback : function() {
+			gl.viewport(0, 0, res, res);
+			quadObj.draw({
+				shader : initReduceShader,
+				texs : [potentialTex]
+			});
+		}
+	});
+	var tmp = tmpTex;
+	tmpTex = reduceTex;
+	reduceTex = tmp;
+
+	//reduce to 1x1
+	var size = res;
+	while (size > 1) {
+		size /= 2;
+		if (size !== Math.floor(size)) throw 'got np2 size '+res;
+
+		fbo.setColorAttachmentTex2D(0, tmpTex);
+		fbo.draw({
+			callback : function() {
+				gl.viewport(0, 0, size, size);
+				quadObj.draw({
+					shader : reduceShader,
+					uniforms : {
+						texsize : [res, res],
+						viewsize : [size, size]
+					},
+					texs : [reduceTex]
+				});
+			}
+		});
+		var tmp = tmpTex;
+		tmpTex = reduceTex;
+		reduceTex = tmp;
+	}
+
+	//extract the min/max from the last
+	fbo.bind();
+	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tmpTex.obj, 0);
+	fbo.check();
+	gl.viewport(0, 0, res, res);
+	//TODO we don't need to draw to the whole quad if we're just going to read back the 1x1 corner pixel	
+	var uint8Result = new Uint8Array(4);
+	//read min
+	quadObj.draw({
+		shader : encodeShaders[0],	//read channel 0 (red) from pixel 0,0
+		texs : [reduceTex]
+	});
+	gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, uint8Result);
+	lastDataMin2 = (new Float32Array(uint8Result))[0];
+	//read max
+	quadObj.draw({
+		shader : encodeShaders[1],	//read channel 1 (green) from pixel 0,0
+		texs : [reduceTex]
+	});
+	gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, uint8Result);
+	lastDataMax2 = (new Float32Array(uint8Result))[0];
+	fbo.unbind();	
 
 	//update
 	requestAnimFrame(update);
@@ -211,8 +293,9 @@ $(document).ready(function() {
 
 	densityTex = new glutil.FloatTexture2D({width:res, height:res, data:function(){return[0,0,0,0];}});
 	potentialTex = new glutil.FloatTexture2D({width:res, height:res, data:function(){return[0,0,0,0];}});
+	displayTex = new glutil.FloatTexture2D({width:res, height:res, data:function(){return[0,0,0,0];}});
+	reduceTex = new glutil.FloatTexture2D({width:res, height:res});
 	tmpTex = new glutil.FloatTexture2D({width:res, height:res});
-	tmpTex2 = new glutil.FloatTexture2D({width:res, height:res});
 
 	// shaders
 
@@ -270,50 +353,57 @@ return atan(dphi_d.y, dphi_d.x) / (2. * pi);
 		$('<span>', {text : drawMode.name}).appendTo($('#panel'));
 		$('<br>').appendTo($('#panel'));
 		
-		renderShaders[drawMode.name] = new glutil.ShaderProgram({
-			vertexPrecision : 'best',
-			vertexCode : mlstr(function(){/*
-attribute vec2 vertex;
-varying vec2 pos;
-uniform mat4 mvMat;
-uniform mat4 projMat;
-void main() {
-	pos = vertex;
-	gl_Position = projMat * mvMat * vec4(vertex.xy, 0., 1.);	//close to KernelShader, except has mvMat and projMat
-}
-*/}),
-			fragmentPrecision : 'best',
-			fragmentCode : 
+		displayShaders[drawMode.name] = new glutil.KernelShader({
+			code : 
 '#extension GL_OES_standard_derivatives : enable\n'+
 'const float dx = '+(1/res)+';\n'+
 mlstr(function(){/*
-varying vec2 pos;
-uniform float lastMin, lastMax;
-uniform sampler2D potentialTex;
-uniform sampler2D densityTex;
-uniform sampler2D heatTex;
-
 float calcValue() {
 */}) + drawMode.code + mlstr(function(){/*
 }
 
 void main() {
 	float v = calcValue();
-	v = (v - lastMin) / (lastMax - lastMin);
-	gl_FragColor = texture2D(heatTex, vec2(v, .5));
+	gl_FragColor = vec4(v, 0., 0., 1.);
 }
 			*/}),
-			uniforms : {
-				potentialTex : 0,
-				densityTex : 1,
-				heatTex : 2
-			}
+			texs : ['potentialTex', 'densityTex']
 		});
 	});
 
 	//set defaults
 	currentDrawMode = drawModes[drawModes.findWithComparator(null, function(obj) { return obj.name == 'angle'; })];
 	currentDrawMode.radio.prop('checked', true);
+
+	drawHeatShader = new glutil.ShaderProgram({
+		vertexPrecision : 'best',
+		vertexCode : mlstr(function(){/*
+attribute vec2 vertex;
+varying vec2 pos;
+uniform mat4 mvMat;
+uniform mat4 projMat;
+void main() {
+	pos = vertex;
+	gl_Position = projMat * mvMat * vec4(vertex.xy, 0., 1.);
+}
+		*/}),
+		fragmentPrecision : 'best',
+		fragmentCode : mlstr(function(){/*
+varying vec2 pos;
+uniform sampler2D displayTex;
+uniform sampler2D heatTex;
+uniform float lastMin, lastMax;
+void main() {
+	float v = texture2D(displayTex, pos).r;
+	v = (v - lastMin) / (lastMax - lastMin);
+	gl_FragColor = texture2D(heatTex, vec2(v, .5));
+}
+		*/}),
+		uniforms : {
+			displayTex : 0,
+			heatTex : 1
+		}
+	});
 
 	/*
 	(d/dx^2 + d/dy^2) phi = 4 pi rho
@@ -356,19 +446,104 @@ void main() {
 		texs : ['potentialTex', 'densityTex']
 	});
 
-	reduceShader : new glutil.KernelShader({
+	//initReduce: map channel x to xy
+	initReduceShader = new glutil.KernelShader({
+		code : mlstr(function(){/*
+void main() {
+	gl_FragColor = texture2D(tex, pos).xxzw;
+}
+		*/}),
+		texs : ['tex']
+	});
+
+	//reduce: reduce the mins of the x's and the maxs of the y's
+	reduceShader = new glutil.KernelShader({
 		code : mlstr(function(){/*
 void main() {
 	vec2 intPos = pos * viewsize - .5;
+
+	//get four pixels to reduce to one ...
+	//x holds the min, y holds the max
+	vec2 a = texture2D(tex, (intPos * 2. + .5) / texsize).xy;
+	vec2 b = texture2D(tex, (intPos * 2. + vec2(1., 0.) + .5) / texsize).xy;
+	vec2 c = texture2D(tex, (intPos * 2. + vec2(0., 1.) + .5) / texsize).xy;
+	vec2 d = texture2D(tex, (intPos * 2. + vec2(1., 1.) + .5) / texsize).xy;
+
+	//final min
+	float e = min(a.x, b.x);
+	float f = min(c.x, d.x);
+	float g = min(e, f);
+
+	//final max
+	float h = max(a.y, b.y);
+	float i = max(c.y, d.y);
+	float j = max(h, i);
+
+	gl_FragColor = vec4(g, j, 0., 0.);
+
 }
 		*/}),
 		uniforms : {
 			texsize : 'vec2',
 			viewsize : 'vec2'
 		},
-		texs : ['srcTex']
+		texs : ['tex']
 	});
+
+	//http://lab.concord.org/experiments/webgl-gpgpu/webgl.html
+	for (var channel = 0; channel < 4; ++channel) {
+		encodeShaders[channel] = new glutil.KernelShader({
+			code : mlstr(function(){/*
+float shift_right(float v, float amt) {
+	v = floor(v) + 0.5;
+	return floor(v / exp2(amt));
+}
+
+float shift_left(float v, float amt) {
+	return floor(v * exp2(amt) + 0.5);
+}
+
+float mask_last(float v, float bits) {
+	return mod(v, shift_left(1.0, bits));
+}
+
+float extract_bits(float num, float from, float to) {
+	from = floor(from + 0.5);
+	to = floor(to + 0.5);
+	return mask_last(shift_right(num, from), to - from);
+}
+
+vec4 encode_float(float val) {
+	if (val == 0.0)
+		return vec4(0, 0, 0, 0);
+	float sign = val > 0.0 ? 0.0 : 1.0;
+	val = abs(val);
+	float exponent = floor(log2(val));
+	float biased_exponent = exponent + 127.0;
+	float fraction = ((val / exp2(exponent)) - 1.0) * 8388608.0;
 	
+	float t = biased_exponent / 2.0;
+	float last_bit_of_biased_exponent = fract(t) * 2.0;
+	float remaining_bits_of_biased_exponent = floor(t);
+	
+	float byte4 = extract_bits(fraction, 0.0, 8.0) / 255.0;
+	float byte3 = extract_bits(fraction, 8.0, 16.0) / 255.0;
+	float byte2 = (last_bit_of_biased_exponent * 128.0 + extract_bits(fraction, 16.0, 23.0)) / 255.0;
+	float byte1 = (sign * 128.0 + remaining_bits_of_biased_exponent) / 255.0;
+	return vec4(byte4, byte3, byte2, byte1);
+}
+
+void main() {
+	vec4 data = texture2D(tex, pos);
+	gl_FragColor = encode_float(data[$channel]);
+}
+*/}).replace(/\$channel/g, channel),
+			texs : ['tex']
+		});
+	}
+
+
+
 	addDropShader = new glutil.KernelShader({
 		code : mlstr(function(){/*
 void main() {
