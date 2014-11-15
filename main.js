@@ -117,13 +117,7 @@ void main() {
 });
 
 
-function update() {
-	var canvas = glutil.canvas;
-	gl.viewport(0, 0, canvas.width, canvas.height);
-
-	//just clears the buffer.  no scenegraph to draw
-	glutil.draw();	
-
+function drawDisplayTex() {
 	//display
 	glutil.unitQuad.draw({
 		shader : drawHeatShader,
@@ -136,8 +130,9 @@ function update() {
 			heatTex
 		]
 	});
+}
 
-
+function generateDisplayTex() {
 	//generate display texture
 	fbo.setColorAttachmentTex2D(0, tmpTex);
 	fbo.draw({
@@ -152,7 +147,9 @@ function update() {
 	var tmp = tmpTex;
 	tmpTex = displayTex;
 	displayTex = tmp;
+}
 
+function relaxJacobiBuffer() {
 	//relax buffer
 	fbo.setColorAttachmentTex2D(0, tmpTex);
 	fbo.draw({
@@ -167,7 +164,9 @@ function update() {
 	var tmp = tmpTex;
 	tmpTex = potentialTex;
 	potentialTex = tmp;
+}
 
+function reduceDisplayTex() {
 	//init reduceTex
 	fbo.setColorAttachmentTex2D(0, tmpTex);
 	fbo.draw({
@@ -175,7 +174,7 @@ function update() {
 			gl.viewport(0, 0, res, res);
 			quadObj.draw({
 				shader : initReduceShader,
-				texs : [potentialTex]
+				texs : [displayTex]
 			});
 		}
 	});
@@ -230,6 +229,19 @@ function update() {
 	gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, uint8Result);
 	lastDataMax2 = (new Float32Array(uint8Result))[0];
 	fbo.unbind();	
+}
+
+function update() {
+	var canvas = glutil.canvas;
+	gl.viewport(0, 0, canvas.width, canvas.height);
+
+	//just clears the buffer.  no scenegraph to draw
+	glutil.draw();	
+
+	drawDisplayTex();	//draw old display tex to screen
+	generateDisplayTex();	//generate new display tex
+	relaxJacobiBuffer();	//relax density into potential
+	reduceDisplayTex();		//reduce display tex to get min/max
 
 	//update
 	requestAnimFrame(update);
