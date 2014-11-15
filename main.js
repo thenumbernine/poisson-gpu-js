@@ -407,7 +407,7 @@ uniform sampler2D heatTex;
 uniform float lastMin, lastMax;
 void main() {
 	float v = texture2D(displayTex, pos).r;
-	v = (v - lastMin) / (lastMax - lastMin + 1e-6);
+	v = (v - lastMin) / (lastMax - lastMin);
 	gl_FragColor = texture2D(heatTex, vec2(v, .5));
 }
 		*/}),
@@ -574,15 +574,15 @@ void main() {
 	vec2 closest = mix(mouseLastPos, mousePos, t);
 
 	float len = length(pos - closest);
-	
-	
-	float infl = step(-radius, -len);
+
+	const float epsilon = .001;
+	float infl = smoothstep(-radius-epsilon, -radius+epsilon, -len);
 	gl_FragColor = texture2D(tex, pos);
 	gl_FragColor.r = mix(gl_FragColor.r, color, infl);
 }
 		*/}),
 		uniforms : {
-			color : ['float', .5],
+			color : ['float', 1],
 			radius : ['float', 2/res],
 			mousePos : 'vec2',
 			mouseLastPos : 'vec2'
