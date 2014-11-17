@@ -4,6 +4,9 @@ algorithm:
 2) jacobi relaxation of inverse discrete poisson to calculate potential buffer
 3) min/max reduce across potential
 4) heat map render
+
+TODO
+https://ir.library.oregonstate.edu/xmlui/bitstream/handle/1957/28524/Interactive%20tensor%20field%20design%20and%20visualization%20on%20surfaces.pdf?sequence=1
 */
 
 var glutil;
@@ -290,10 +293,10 @@ $(document).ready(function() {
 	heatTex = new glutil.GradientTexture({
 		width : 256,
 		colors : [
-			[0, 0, 0],
-			[0, 0, 1],
+			[.5, 0, 0],
 			[1, 1, 0],
-			[1, 0, 0]
+			[0, 0, .5],
+			[0, 0, 0],
 		],
 		//dontRepeat : true
 	});
