@@ -387,7 +387,7 @@ void main() {
 	});
 
 	//set defaults
-	currentDrawMode = drawModes[drawModes.findWithComparator(null, function(obj) { return obj.name == 'angle'; })];
+	currentDrawMode = drawModes[drawModes.findIndex(function(obj) { return obj.name == 'angle'; })];
 	currentDrawMode.radio.prop('checked', true);
 
 	drawHeatShader = new glutil.ShaderProgram({
