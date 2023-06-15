@@ -4,6 +4,7 @@ import {GLUtil} from '/js/gl-util.js';
 import {Mouse3D} from '/js/mouse3d.js';
 import {makeGradient} from '/js/gl-util-Gradient.js';
 import {makeUnitQuad} from '/js/gl-util-UnitQuad.js';
+import {makeKernel} from '/js/gl-util-Kernel.js';
 import {makeFloatTexture2D} from '/js/gl-util-FloatTexture2D.js';
 
 const ids = getIDs();
@@ -43,7 +44,7 @@ let reduceShader;
 let encodeShaders = [];
 //vars
 let currentDrawMode;
-let res = 1024;
+let res = 256;
 let lastDataMin = 0;
 let lastDataMax = 1;
 
@@ -64,16 +65,15 @@ function drawDisplayTex() {
 
 function generateDisplayTex() {
 	//generate display texture
-	gl.viewport(0, 0, res, res);
-	fbo.setColorAttachmentTex2D(0, tmpTex);
-	fbo.draw({
-		callback : () => {
-			quadObj.draw({
-				shader : displayShaders[currentDrawMode.name],
-				texs : [potentialTex, densityTex]
-			});
-		}
+	gl.viewport(0,0,res,res);
+	fbo.bind();
+	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tmpTex.obj, 0);
+	fbo.check();
+	quadObj.draw({
+		shader : displayShaders[currentDrawMode.name],
+		texs : [potentialTex, densityTex],
 	});
+	fbo.unbind();
 	let tmp = tmpTex;
 	tmpTex = displayTex;
 	displayTex = tmp;
@@ -81,9 +81,9 @@ function generateDisplayTex() {
 
 function relaxJacobiBuffer() {
 	//relax buffer
-	gl.viewport(0, 0, res, res);
-	fbo.setColorAttachmentTex2D(0, tmpTex);
 	fbo.draw({
+		viewport : [0,0,res,res],
+		dest : tmpTex,
 		callback : () => {
 			quadObj.draw({
 				shader : relaxShader,
@@ -98,9 +98,9 @@ function relaxJacobiBuffer() {
 
 function reduceDisplayTex() {
 	//init reduceTex
-	gl.viewport(0, 0, res, res);
-	fbo.setColorAttachmentTex2D(0, tmpTex);
 	fbo.draw({
+		viewport : [0,0,res,res],
+		dest : tmpTex,
 		callback : () => {
 			quadObj.draw({
 				shader : initReduceShader,
@@ -118,9 +118,9 @@ function reduceDisplayTex() {
 		size /= 2;
 		if (size !== Math.floor(size)) throw 'got np2 size '+res;
 
-		gl.viewport(0, 0, size, size);
-		fbo.setColorAttachmentTex2D(0, tmpTex);
 		fbo.draw({
+			viewport : [0,0,size,size],
+			dest : tmpTex,
 			callback : () => {
 				quadObj.draw({
 					shader : reduceShader,
@@ -206,66 +206,8 @@ try {
 
 glutil.import('Gradient', makeGradient);
 glutil.import('UnitQuad', makeUnitQuad);
+glutil.import('Kernel', makeKernel);
 glutil.import('FloatTexture2D', makeFloatTexture2D);
-
-class Kernel extends glutil.Program {
-	constructor(args) {
-		let varyingCodePrefix = 'varying vec2 pos;\n';
-		let fragmentCodePrefix = '';
-		let uniforms = {};
-		if (args.uniforms !== undefined) {
-			Object.entries(args.uniforms).forEach(entry => {
-				let [uniformName, uniformType] = entry;
-				if (Array.isArray(uniformType)) {
-					//save initial value
-					uniforms[uniformName] = uniformType[1];
-					uniformType = uniformType[0];
-				}
-				fragmentCodePrefix += 'uniform '+uniformType+' '+uniformName+';\n';
-			});
-		}
-		if (args.texs !== undefined) {
-			args.texs.forEach((v, i) => {
-				let name, vartype;
-				if (typeof(v) == 'string') {
-					name = v;
-					vartype = 'sampler2D';
-				} else {
-					name = v[0];
-					vartype = v[1];
-				}
-				fragmentCodePrefix += 'uniform '+vartype+' '+name+';\n';
-				uniforms[name] = i;
-			});
-		}
-
-
-		if (!glutil.Kernel.prototype.kernelVertexShader) {
-			glutil.Kernel.prototype.kernelVertexShader = new glutil.VertexShader({
-				code : `#version 300 es
-precision `+glutil.vertexBestPrec+` float;
-` + varyingCodePrefix.replace(/varying/g, 'out') + `
-in vec2 vertex;
-in vec2 texCoord;
-void main() {
-	pos = texCoord;
-	gl_Position = vec4(vertex, 0., 1.);
-}
-`
-			});
-		}
-
-		args.vertexShader = glutil.Kernel.prototype.kernelVertexShader;
-		args.fragmentCode =
-varyingCodePrefix.replace(/varying/g, 'in')
-+ fragmentCodePrefix
-+ args.code;
-		delete args.code;
-		args.uniforms = uniforms;
-		super(args);
-	}
-}
-glutil.Kernel = Kernel;
 
 glutil.view.ortho = true;
 glutil.view.zNear = -1;
@@ -585,6 +527,20 @@ void main() {
 	texs : ['tex']
 });
 
+const solidShader = new glutil.Kernel({
+	code : `
+out vec4 fragColor;
+void main() {
+	fragColor = color;
+}
+`,
+	uniforms : {
+		color : ['vec4', [0,0,0,0]]
+	}
+});
+
+quadObj = glutil.UnitQuad.unitQuad;
+
 fbo = new glutil.Framebuffer({
 	width : res,	//shouldn't need size since there is no depth component
 	height : res,
@@ -592,28 +548,15 @@ fbo = new glutil.Framebuffer({
 gl.viewport(0, 0, res, res);
 fbo.bind();
 allFloatTexs.forEach(tex => { 
+	//gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex.obj, 0);
 	fbo.setColorAttachmentTex2D(0, tex);
 	fbo.check();
-	gl.clear(gl.COLOR_BUFFER_BIT);
+	//gl.clear(gl.COLOR_BUFFER_BIT);
+	quadObj.draw({
+		shader : solidShader
+	});
 });
 fbo.unbind();
-
-//how does this compare with unitQuad?
-quadObj = new glutil.SceneObject({
-	mode : gl.TRIANGLE_STRIP,
-	attrs : {
-		vertex : new glutil.ArrayBuffer({
-			dim : 2,
-			data : [-1,-1, 1,-1, -1,1, 1,1]
-		}),
-		texCoord : new glutil.ArrayBuffer({
-			dim : 2,
-			data : [0,0, 1,0, 0,1, 1,1]
-		})
-	},
-	parent : null,
-	static : true
-});
 
 const mousePos = vec2.create();
 let mouseLastPos = vec2.create();
@@ -626,10 +569,10 @@ const updateMousePos = () => {
 };
 const createDrop = () => {
 	//add to density kernel  ...
-	fbo.setColorAttachmentTex2D(0, tmpTex);
 	fbo.draw({
+		viewport : [0,0,res,res],
+		dest : tmpTex,
 		callback : () => {
-			gl.viewport(0, 0, res, res);
 			quadObj.draw({
 				shader : addDropShader,
 				texs : [densityTex],
