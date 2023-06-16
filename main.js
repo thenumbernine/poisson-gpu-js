@@ -65,15 +65,16 @@ function drawDisplayTex() {
 
 function generateDisplayTex() {
 	//generate display texture
-	gl.viewport(0,0,res,res);
-	fbo.bind();
-	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tmpTex.obj, 0);
-	fbo.check();
-	quadObj.draw({
-		shader : displayShaders[currentDrawMode.name],
-		texs : [potentialTex, densityTex],
+	fbo.draw({
+		viewport : [0,0,res,res],
+		dest : tmpTex.obj,
+		callback : () => {
+			quadObj.draw({
+				shader : displayShaders[currentDrawMode.name],
+				texs : [potentialTex, densityTex],
+			});
+		},
 	});
-	fbo.unbind();
 	let tmp = tmpTex;
 	tmpTex = displayTex;
 	displayTex = tmp;
@@ -139,7 +140,7 @@ function reduceDisplayTex() {
 
 	//extract the min/max from the last
 	fbo.bind();
-	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tmpTex.obj, 0);
+	fbo.setColorAttachment(tmpTex);
 	fbo.check();
 	gl.viewport(0, 0, res, res);
 	//TODO we don't need to draw to the whole quad if we're just going to read back the 1x1 corner pixel
@@ -546,17 +547,18 @@ fbo = new glutil.Framebuffer({
 	height : res,
 });
 gl.viewport(0, 0, res, res);
-fbo.bind();
 allFloatTexs.forEach(tex => { 
 	//gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex.obj, 0);
-	fbo.setColorAttachmentTex2D(0, tex);
-	fbo.check();
-	//gl.clear(gl.COLOR_BUFFER_BIT);
-	quadObj.draw({
-		shader : solidShader
+	fbo.draw({
+		dest : tex,
+		callback : () => {
+			//gl.clear(gl.COLOR_BUFFER_BIT);
+			quadObj.draw({
+				shader : solidShader
+			});
+		},
 	});
 });
-fbo.unbind();
 
 const mousePos = vec2.create();
 let mouseLastPos = vec2.create();
