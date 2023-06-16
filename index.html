@@ -31,19 +31,18 @@ a:active {
 	cursor:pointer;
 	color:#00FFFF;
 }
-
-/* wikipedia hacks */
-.editsection { display:none; }
-
 		</style>
 
 	</head>
 	<body style='margin:0px; overflow:hidden'>
 		<div id='panel' style='overflow-x:hidden; z-index:1; max-width:400px; position:absolute; background-color:rgba(0,0,0,.75)'>
+			<button id='button_pan'><input id='inputMethod_pan' type='radio' name='inputMethod' value='pan'/> pan</button><br>
+			<button id='button_draw'><input id='inputMethod_draw' type='radio' name='inputMethod' value='draw' checked=1/> draw</button><br>
+			<button id='reset'>Reset</button><br>
+			<select id='gridsize'></select>	<br>
 		</div>
 		<div id='webglfail' style='display:none'>
 			Sorry, your browser does not support WebGL<br>
 		</div>
 	</body>
 </html>
-

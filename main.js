@@ -10,6 +10,11 @@ import {makeFloatTexture2D} from '/js/gl-util-FloatTexture2D.js';
 const ids = getIDs();
 window.ids = ids;
 
+const urlparams = new URLSearchParams(location.search);
+
+let res = +urlparams.get('size');
+if (!res || !isFinite(res)) res = 1024;
+
 /*
 algorithm:
 1) user draws into density buffer
@@ -44,9 +49,9 @@ let reduceShader;
 let encodeShaders = [];
 //vars
 let currentDrawMode;
-let res = 256;
 let lastDataMin = 0;
 let lastDataMax = 1;
+let inputMethod = document.querySelector('input[name="inputMethod"]:checked').value;
 
 function drawDisplayTex() {
 	//display
@@ -138,28 +143,30 @@ function reduceDisplayTex() {
 		reduceTex = tmp;
 	}
 
+return;
 	//extract the min/max from the last
-	fbo.bind();
-	fbo.setColorAttachment(tmpTex);
-	fbo.check();
-	gl.viewport(0, 0, res, res);
-	//TODO we don't need to draw to the whole quad if we're just going to read back the 1x1 corner pixel
-	let reduceUInt8Result = new Uint8Array(4);
-	//read min
-	quadObj.draw({
-		shader : encodeShaders[0],	//read channel 0 (red) from pixel 0,0
-		texs : [reduceTex]
+	fbo.draw({
+		dest : tmpTex,
+		viewport : [0, 0, res, res],
+		callback : () => {
+			//TODO we don't need to draw to the whole quad if we're just going to read back the 1x1 corner pixel
+			let reduceUInt8Result = new Uint8Array(4);
+			//read min
+			quadObj.draw({
+				shader : encodeShaders[0],	//read channel 0 (red) from pixel 0,0
+				texs : [reduceTex]
+			});
+			gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, reduceUInt8Result);
+			lastDataMin = (new Float32Array(reduceUInt8Result.buffer))[0];
+			//read max
+			quadObj.draw({
+				shader : encodeShaders[1],	//read channel 1 (green) from pixel 0,0
+				texs : [reduceTex]
+			});
+			gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, reduceUInt8Result);
+			lastDataMax = (new Float32Array(reduceUInt8Result.buffer))[0];
+		},
 	});
-	gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, reduceUInt8Result);
-	lastDataMin = (new Float32Array(reduceUInt8Result.buffer))[0];
-	//read max
-	quadObj.draw({
-		shader : encodeShaders[1],	//read channel 1 (green) from pixel 0,0
-		texs : [reduceTex]
-	});
-	gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, reduceUInt8Result);
-	lastDataMax = (new Float32Array(reduceUInt8Result.buffer))[0];
-	fbo.unbind();
 }
 
 function update() {
@@ -175,7 +182,7 @@ function update() {
 	reduceDisplayTex();		//reduce display tex to get min/max
 
 	//update
-	requestAnimFrame(update);
+	window.requestAnimationFrame(update);
 }
 
 function onresize() {
@@ -204,11 +211,13 @@ try {
 	show(ids.webglfail);
 	throw e;
 }
-
 glutil.import('Gradient', makeGradient);
 glutil.import('UnitQuad', makeUnitQuad);
 glutil.import('Kernel', makeKernel);
 glutil.import('FloatTexture2D', makeFloatTexture2D);
+
+let maxsize =  gl.getParameter(gl.MAX_TEXTURE_SIZE);
+if (res > maxsize) res = maxsize;
 
 glutil.view.ortho = true;
 glutil.view.zNear = -1;
@@ -528,37 +537,25 @@ void main() {
 	texs : ['tex']
 });
 
-const solidShader = new glutil.Kernel({
-	code : `
-out vec4 fragColor;
-void main() {
-	fragColor = color;
-}
-`,
-	uniforms : {
-		color : ['vec4', [0,0,0,0]]
-	}
-});
-
 quadObj = glutil.UnitQuad.unitQuad;
 
 fbo = new glutil.Framebuffer({
 	width : res,	//shouldn't need size since there is no depth component
 	height : res,
 });
-gl.viewport(0, 0, res, res);
-allFloatTexs.forEach(tex => { 
-	//gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex.obj, 0);
-	fbo.draw({
-		dest : tex,
-		callback : () => {
-			//gl.clear(gl.COLOR_BUFFER_BIT);
-			quadObj.draw({
-				shader : solidShader
-			});
-		},
+
+function reset() {
+	allFloatTexs.forEach(tex => {
+		fbo.draw({
+			dest : tex,
+			viewport : [0, 0, res, res],
+			callback : () => {
+				gl.clear(gl.COLOR_BUFFER_BIT);
+			},
+		});
 	});
-});
+}
+reset();
 
 const mousePos = vec2.create();
 let mouseLastPos = vec2.create();
@@ -566,8 +563,12 @@ let mouse;
 const updateMousePos = () => {
 	mouseLastPos[0] = mousePos[0];
 	mouseLastPos[1] = mousePos[1];
-	mousePos[0] = (mouse.xf - .5) * glutil.canvas.width / glutil.canvas.height + .5;
-	mousePos[1] = 1 - mouse.yf;
+
+	let ar = canvas.width / canvas.height;
+	let thisX = (mouse.xf - .5) * 2 * glutil.view.fovY * ar + glutil.view.pos[0];
+	let thisY = (1 - mouse.yf - .5) * 2 * glutil.view.fovY + glutil.view.pos[1];
+	mousePos[0] = thisX;
+	mousePos[1] = thisY;
 };
 const createDrop = () => {
 	//add to density kernel  ...
@@ -592,15 +593,56 @@ const createDrop = () => {
 mouse = new Mouse3D({
 	pressObj : canvas,
 	passiveMove : updateMousePos,
-	move : () => {
+	move : (dx,dy) => {
 		updateMousePos();
-		createDrop();
+		if (inputMethod == 'pan') {
+			glutil.view.pos[0] -= dx / canvas.height * 2 * glutil.view.fovY;
+			glutil.view.pos[1] += dy / canvas.height * 2 * glutil.view.fovY;
+			glutil.updateProjection();
+		} else if (inputMethod == 'draw') {
+			createDrop();
+		}
+	},
+	zoom : (dz) => {
+		glutil.view.fovY *= Math.exp(-.1 * dz / canvas.height);
+		glutil.updateProjection();
 	},
 	mousedown : () => {
-		updateMousePos();
-		createDrop();
+		if (inputMethod == 'draw') {
+			updateMousePos();
+			createDrop();
+		}
 	}
 });
+
+for (let size = 32; size <= maxsize; size<<=1) {
+	let option = DOM('option', {
+		text : size,
+		value : size,
+		appendTo : ids.gridsize,
+	});
+	if (size == res) option.setAttribute('selected', 'true');
+}
+ids.gridsize.addEventListener('change', e => {
+	const params = new URLSearchParams(urlparams);
+	params.set('size', ids.gridsize.value);
+	location.href = location.origin + location.pathname + '?' + params.toString();
+});
+
+ids.reset.addEventListener('click', e => { reset(); });
+
+// TODO here and conway-life-webgl a better way ...
+let updateRadio = function() {
+	for (let k in ids) {
+		if (k.substr(0,11) == 'inputMethod') {
+			ids[k].checked = ids[k].value == inputMethod;
+		}
+	}
+};
+ids.inputMethod_pan.addEventListener('click', e => { inputMethod = 'pan'; });
+ids.inputMethod_draw.addEventListener('click', e => { inputMethod = 'draw'; });
+ids.button_pan.addEventListener('click', e => { inputMethod = 'pan'; updateRadio(); });
+ids.button_draw.addEventListener('click', e => { inputMethod = 'draw'; updateRadio(); });
 
 onresize();
 window.addEventListener('resize', onresize);
