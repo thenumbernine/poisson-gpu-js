@@ -294,7 +294,7 @@ vec2 dphi_d;
 dphi_d.x = (phiXP - phiXN) / (2. * dx);
 dphi_d.y = (phiYP - phiYN) / (2. * dx);
 const float pi = 3.141592653589793115997963468544185161590576171875;
-return atan(dphi_d.y, dphi_d.x);
+return atan(dphi_d.y, dphi_d.x) / (2. * pi);
 `
 	}
 ];
