@@ -1,5 +1,6 @@
+import {appendChildren, Br, Canvas, Input, Option, Span} from '/js/dom.js';
 import {vec2} from '/js/gl-matrix-3.4.1/index.js';
-import {DOM, getIDs, removeFromParent} from '/js/util.js';
+import {getIDs, removeFromParent} from '/js/util.js';
 import {GLUtil} from '/js/gl-util.js';
 import {Mouse3D} from '/js/mouse3d.js';
 import {makeGradient} from '/js/gl-util-Gradient.js';
@@ -191,8 +192,8 @@ function onresize() {
 	glutil.resize();
 }
 
-let canvas = DOM('canvas', {
-	css : {
+let canvas = Canvas({
+	style : {
 		left : 0,
 		top : 0,
 		position : 'absolute',
@@ -300,14 +301,18 @@ return atan(dphi_d.y, dphi_d.x) / (2. * pi);
 ];
 
 drawModes.forEach(drawMode => {
-	drawMode.radio = DOM('input', {
-		type : 'radio',
-		name : 'drawMode',
-		click : () => { currentDrawMode = drawMode; },
-		appendTo : ids.panel,
-	});
-	DOM('span', {text : drawMode.name, appendTo : ids.panel });
-	DOM('br', {appendTo : ids.panel});
+	appendChildren(
+		ids.panel,
+		drawMode.radio = Input({
+			type : 'radio',
+			name : 'drawMode',
+			events : {
+				click : () => { currentDrawMode = drawMode; },
+			},
+		}),
+		Span({innerText : drawMode.name }),
+		Br()
+	);
 
 	displayShaders[drawMode.name] = new glutil.Kernel({
 		code :
@@ -616,8 +621,8 @@ mouse = new Mouse3D({
 });
 
 for (let size = 32; size <= maxsize; size<<=1) {
-	let option = DOM('option', {
-		text : size,
+	let option = Option({
+		innerText : size,
 		value : size,
 		appendTo : ids.gridsize,
 	});
